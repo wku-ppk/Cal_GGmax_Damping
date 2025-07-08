@@ -1,0 +1,208 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+
+
+
+def Gsec_Damping(shear_strain, z_xz):
+    # (Assuming the internal details of this function remain as in your original code)
+    # Find indices of max and min shear strain values
+    max_index = np.argmax(shear_strain)
+    min_index = np.argmin(shear_strain)
+    
+    # Compute Gsec
+    delta_strain = shear_strain[max_index] - shear_strain[min_index]
+    delta_stress = z_xz[max_index] - z_xz[min_index]
+    gsec = delta_stress / delta_strain
+    
+    # Compute damping
+    delta_w = np.trapz(z_xz, shear_strain)
+    maxindex = np.argmax(shear_strain)
+    maxstrain = shear_strain[maxindex]
+    maxstress = z_xz[maxindex]
+    W = 0.5 * maxstrain * maxstress
+    Damping = delta_w / (4 * np.pi * W)
+    return gsec, Damping
+
+with open('cyclic_stress_NO1.txt', 'r') as f:
+    lines = f.readlines()
+    
+lines = lines[2:]
+
+Gmax_stress = []
+Gmax_shear_strain = []
+
+for line in lines:
+    # Splitting by comma to get individual columns
+    columns = line.strip().split(',')
+    Gmax_stress.append(float(columns[11]))  # third column is z_force
+    Gmax_shear_strain.append(float(columns[6]))  # fifth column is shear_strain
+Gmax=abs(Gmax_stress[0]-Gmax_stress[1])/abs(Gmax_shear_strain[0]-Gmax_shear_strain[1])
+
+
+#cycle shear strain
+CSS=[0.0001, 0.00025, 0.0005, 0.00075, 0.001, 0.0025, 0.005, 0.0075, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10]
+
+
+
+
+
+all_steps_Gsec = {
+    "1cyclic": [],
+    "2cyclic": [],
+    "3cyclic": [],
+    "4cyclic": []
+}
+
+all_steps_Damping = {
+    "1cyclic": [],
+    "2cyclic": [],
+    "3cyclic": [],
+    "4cyclic": []
+}
+
+# 여기서 메인 루프가 시작됩니다.
+for i in range(1, 22):
+    filename = f'cyclic_stress_NO{i}.txt'
+    try:
+        with open(filename, 'r') as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        print(f"File not found: {filename}")
+        continue
+    
+    lines = lines[2:]  # 첫 두 줄은 주석이므로 제거합니다.
+
+    # 각 파일을 처리할 때 필요한 데이터 구조를 준비합니다.
+
+
+    # 각 단계별 데이터를 처리합니다.
+    for start_step in range(51000000, 131000000, 20000000):
+        z_xz = []
+        shear_strain = []
+
+        for line in lines:
+            columns = line.strip().split(',')
+            step = int(columns[0])
+
+            if start_step <= step < start_step + 20000000:
+                z_xz.append(float(columns[11]))
+                shear_strain.append(float(columns[6]))
+
+        if not z_xz or not shear_strain:
+            print(f"No data in the specified step range ({start_step}-{start_step+20000000}) for file: {filename}")
+            continue
+
+        gsec, D = Gsec_Damping(shear_strain, z_xz)  # Gsec_Damping 함수의 구현이 필요합니다.
+
+        # 지금 바로 파일에 쓰기
+        range_key = f"{start_step}_{start_step+20000000}"
+        tx = f'cyclic_stress_NO{start_step}-gmax-damping.txt'
+
+        # Gsec과 Damping 값을 Gmax로 정규화합니다.
+        normalized_gsec = gsec / Gmax if Gmax != 0 else 0  # Gmax가 0이 아니라고 가정합니다.
+        normalized_Damping = D  # 이미 적절한 형식/단위로 있다고 가정합니다.
+
+        file_exists = os.path.exists(tx)
+        with open(tx, "a") as file:  # 파일이 이미 존재하면 내용을 추가합니다.
+            if not file_exists:
+                file.write('CSS G/Gmax Damping\n')
+            
+            file.write(f"{CSS[i-1]} {normalized_gsec} {normalized_Damping}\n")  # 현재의 CSS 값을 사용합니다.
+
+        # 딕셔너리에 데이터 추가 (다른 처리를 위해 필요한 경우)
+        if range_key in all_steps_Gsec:
+            all_steps_Gsec[range_key].append(gsec)
+        if range_key in all_steps_Damping:
+            all_steps_Damping[range_key].append(D)
+
+
+
+
+
+#그래프 그리기 시작
+# 결과를 저장할 딕셔너리를 준비합니다.
+all_results = {}
+
+for start_step in range(51000000, 131000000, 20000000):
+    filename = f'cyclic_stress_NO{start_step}-gmax-damping.txt'
+
+    # 파일이 실제로 존재하는지 확인합니다.
+    if not os.path.exists(filename):
+        print(f"{filename} does not exist.")
+        continue  # 다음 start_step으로 넘어갑니다.
+    
+    with open(filename, 'r') as f:
+        lines = f.readlines()
+    lines = lines[1:]
+    # 각 변수에 대한 데이터를 저장할 리스트를 초기화합니다.
+    CSS = []
+    G_Gmax = []
+    Damping = []
+
+    # 파일의 각 줄을 분석합니다.
+    for line in lines:
+        columns = line.strip().split()
+        
+        # 데이터를 리스트에 추가합니다.
+        CSS.append(float(columns[0]))
+        G_Gmax.append(float(columns[1]))
+        Damping.append(float(columns[2]))
+
+    # 결과를 딕셔너리에 저장합니다.
+    all_results[start_step] = {
+        'CSS': CSS,
+        'G_Gmax': G_Gmax,
+        'Damping': Damping,
+    }
+
+
+# 키 설정
+key1 = 51000000  
+key2 = 71000000
+key3 = 91000000
+key4 = 111000000
+
+# 데이터셋과 관련된 변수 생성
+datasets = []
+g_gmax_values = []
+damping_values = []
+css_values = []  # 이 값은 모든 데이터셋에 공통으로 사용되므로 한 번만 설정
+
+# 키에 따라 데이터 수집
+keys = [key1, key2, key3, key4]
+for key in keys:
+    if key in all_results:
+        dataset = all_results[key]
+        g_gmax_values.append(dataset['G_Gmax'])
+        damping_values.append(dataset['Damping'])
+        if not css_values:
+            css_values = dataset['CSS']  # CSS는 모든 데이터셋에 대해 동일하다고 가정
+
+# 그래프 생성 시작
+plt.figure(figsize=(10, 12))  # 그래프의 크기를 조절할 수 있습니다.
+
+# G/Gmax에 대한 그래프
+plt.subplot(2, 1, 1)
+for i, g_gmax in enumerate(g_gmax_values):
+    plt.plot(css_values, g_gmax, label=f'cyclie{i}')  # 각 데이터셋에 레이블 추가
+
+plt.xscale('log')
+plt.ylabel('G/Gmax')
+plt.xlabel('Cycle Shear Strain (%)')
+plt.legend()  # 범례 추가
+
+# Damping에 대한 그래프
+plt.subplot(2, 1, 2)
+for i, damping in enumerate(damping_values):
+    plt.plot(css_values, damping, label=f'cyclie{i}')  # 각 데이터셋에 레이블 추가
+
+plt.xscale('log')
+plt.ylabel('Damping (%)')
+plt.xlabel('Cycle Shear Strain (%)')
+plt.legend()  # 범례 추가
+
+# 그래프 레이아웃 조정 및 표시
+plt.tight_layout()
+plt.show()
+
