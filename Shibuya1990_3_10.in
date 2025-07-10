@@ -1,0 +1,230 @@
+### 1. Initializaion  (Before read_data, read_restart, create_box)
+modify_timing      on                                                # Easter Egg for screen output
+
+
+atom_style         granular                                          # Cannot be changed later
+atom_modify        map array
+boundary           f f f
+newton             off                                               # Newton's 3rd law of motion
+communicate        single vel yes
+units              si
+hard_particles     yes
+dimension          3                                                 # space dimension
+
+neighbor           0.001 bin
+neigh_modify       delay 0
+
+processors         * * * grid numa                                   # Must Declare before creating box
+
+
+### 2. Restart from saved files
+read_restart       Shibuya1990_ovp.rest
+
+### 3. Setup constant variable which controls the simulation
+variable           origin_file universe Shibuya1990_3_10.in                           ## input value
+variable           crit_dt        equal 0.0000005                                  ## input value
+variable           screen_nstep   equal round(0.001/(v_crit_dt))
+
+variable           dim_B          equal 0.05                                      ## input value
+variable           dim_L          equal 0.05                                      ## input value
+variable           dim_H          equal 0.05                                      ## input value
+
+variable           max_sstrain    equal 0.00025                                   ## amplitude unit in decimal (input value)
+variable           cyc_period     equal 10                                        ## period unit in s (input value)
+variable           N_cycle        equal 5                                         ## Number of cycle (input value)
+variable           cyc_steps      equal round(v_cyc_period*v_N_cycle/v_crit_dt)
+
+variable           topcap_ini_z   equal 0.0325                                     ## input value
+variable           topcap_press   equal 100000                                    # unit in Pa (input value)
+variable           topcap_force_z equal -(v_topcap_press)*(v_dim_B)*(v_dim_L)     # unit in N
+variable           topcap_vel_max equal 0.1                                       ## unit in m/s (input value)
+
+variable           MS_radius      equal 0.015                                     # radius of measurement sphere (input value)
+
+region             measurement_sphere sphere 0 0 0 v_MS_radius                    # region of measurement sphere
+group              MS_ region measurement_sphere
+variable           MS_vol        equal 4/3*PI*(v_MS_radius)^3
+
+### 4. Setup gravity and viscous damping
+fix                grav_acc all gravity 9.81 vector 0.0 0.0 -1.0                  ## input value
+fix                viscous_damping all viscous 0.0001                             ## input value
+
+
+### 5. Setup properties  (Material and interaction properties required) # https://doi.org/10.1061/40917(236)34
+fix                m_1 all property/global youngsModulus              peratomtype     70e9 70e9
+fix                m_2 all property/global poissonsRatio              peratomtype     0.25 0.25
+fix                m_3 all property/global coefficientRestitution     peratomtypepair 2 0.8 0.8 0.8 0.8
+fix                m_4 all property/global coefficientFriction        peratomtypepair 2 0.5 0.1 0.1 0.1
+fix                m_5 all property/global coefficientRollingFriction peratomtypepair 2 0.8 0.36 0.36 0.0
+
+pair_style         gran model hertz tangential history rolling_friction epsd2                                           # Hertzian without cohesion
+pair_coeff         * *
+
+### 6. Import Mesh from STL
+fix                box_base     all mesh/surface file base.stl          type 2 scale 1.0
+fix                box_side     all mesh/surface file side_wall.stl     type 2 scale 1.0
+fix                box_moving_L all mesh/surface file moving_wall_L.stl type 2 scale 1.0
+fix                box_moving_R all mesh/surface file moving_wall_R.stl type 2 scale 1.0
+
+fix                topcap_ovp all mesh/surface/stress/servo file top_cap.stl type 2 com 0.0 0.0 ${topcap_ini_z} ctrlPV force axis 0 0 1 target_val ${topcap_force_z} vel_max ${topcap_vel_max}
+
+### 7. Set wall mechanical properties
+fix                gran_walls   all wall/gran model hertz tangential history rolling_friction epsd2 mesh n_meshes 5 meshes box_base box_side box_moving_L box_moving_R topcap_ovp
+
+### 8. Set timestep and equation of motion
+timestep           ${crit_dt}
+fix                integral_eq_motion all nve/sphere
+
+### 9. Simulation control compute/variable
+jump               void_ratio.loop void_ratio                                                                # Call subscript for calculate void ratio
+label              return_atom_vol
+
+print "ak1"
+
+print              "             "                                                                           # Temporary command
+print              "Script return"                                                                           # Temporary command
+print              "N_atoms is = ${N_atoms}, ${total_atom_volume}"                                           # Temporary command
+
+
+
+# Time variables
+variable           step_now                     equal step
+variable           time_now                     equal step*v_crit_dt
+
+variable           reset_step                   equal ${step_now}                                                             # Store as unchanged constant
+variable           reset_time_now               equal (step-v_reset_step)*(v_crit_dt)
+
+
+# Ovp servo variables
+### Variable [1] fx [2] fy [3] fz  [4] Mx [5] My [6] Mz [7] x-disp [8] y-disp [9] z-disp [10] [11] [12]
+variable           servo_z_force                equal f_topcap_ovp[3]
+variable           servo_x_position             equal f_topcap_ovp[7]
+variable           servo_y_position             equal f_topcap_ovp[8]
+variable           servo_z_position             equal f_topcap_ovp[9]
+
+variable           servo_z_initial_position     equal ${servo_z_position}                                    # Store as unchaged constant
+variable           servo_z_disp                 equal (v_servo_z_position-v_servo_z_initial_position)
+
+# moving wall stress
+#variable           MW_L_fx          equal f_box_moving_L[1]
+#variable           MW_L_fy          equal f_box_moving_L[2]
+#variable           MW_L_fz          equal f_box_moving_L[3]
+
+#variable           MW_R_fx          equal f_box_moving_R[1]
+#variable           MW_R_fy          equal f_box_moving_R[2]
+#variable           MW_R_fz          equal f_box_moving_R[3]
+
+
+# void ratio calculation
+variable           void_ratio                   equal (v_dim_B*v_dim_L*(v_servo_z_position+v_dim_H/2)-v_total_atom_volume)/(v_total_atom_volume)             #calculate void ratio
+variable           box_vol                      equal vol                                                                                                       # model box volume
+variable           stress_correction_factor     equal (v_box_vol)/(v_dim_B*v_dim_L*(v_servo_z_position+v_dim_H/2))
+#variable           M_S_stress_correction_factor equal (v_M_S_vol)/(v_dim_B*v_dim_L*(v_servo_z_position+v_dim_H/2))
+
+#print              "void ratio debugging : dim_B, dim_L, servo_z_position, ***" file post_3/cycling.deb
+#fix                print_stress all print ${screen_nstep} "servo_z_position, void_ratio, stress correction factor = &
+#                   ${servo_z_position}, ${void_ratio}, ${stress_correction_factor}" screen yes append post_3/cycling.deb
+
+# compute stress
+compute            my_Temp all temp
+compute            cal_stress    all pressure my_Temp
+compute            MS_cal_stress MS_ stress/atom                                                                # calculate measurement sphere stress (peratom)
+compute            MS_sxx MS_ reduce sum c_MS_cal_stress[1]                                          
+compute            MS_syy MS_ reduce sum c_MS_cal_stress[2]                                          
+compute            MS_szz MS_ reduce sum c_MS_cal_stress[3]                                          
+compute            MS_sxy MS_ reduce sum c_MS_cal_stress[4]                                          
+compute            MS_sxz MS_ reduce sum c_MS_cal_stress[5]                                          
+compute            MS_syz MS_ reduce sum c_MS_cal_stress[6]                                          
+
+variable           MS_sxx_vol equal -c_MS_sxx/(v_MS_vol)
+variable           MS_syy_vol equal -c_MS_syy/(v_MS_vol)
+variable           MS_szz_vol equal -c_MS_szz/(v_MS_vol)
+variable           MS_sxy_vol equal -c_MS_sxy/(v_MS_vol)
+variable           MS_sxz_vol equal -c_MS_sxz/(v_MS_vol)
+variable           MS_syz_vol equal -c_MS_syz/(v_MS_vol)
+
+variable           s_xx equal c_cal_stress[1]*v_stress_correction_factor
+variable           s_yy equal c_cal_stress[2]*v_stress_correction_factor
+variable           s_zz equal c_cal_stress[3]*v_stress_correction_factor
+variable           s_xy equal c_cal_stress[4]*v_stress_correction_factor
+variable           s_xz equal c_cal_stress[5]*v_stress_correction_factor
+variable           s_yz equal c_cal_stress[6]*v_stress_correction_factor
+
+
+# define wall rotation
+variable           initial_sample_height        equal (v_servo_z_initial_position+v_dim_H/2)
+variable           current_sample_height        equal (v_servo_z_position+v_dim_H/2)
+
+variable           max_translation              equal (v_initial_sample_height*tan(v_max_sstrain))
+
+
+variable           phs_1                        equal 1.570796                                                                             # phase pi/2
+variable           phs_2                        equal -1.570796                                                                            # phase -pi/2
+variable           omega_1                      equal 2*3.141592/(v_cyc_period)                                                            # omega
+
+variable           pos_ref_base                 equal 0.0                                                                                  # reference position (base)
+variable           pos_ref_L                    equal  v_dim_L/2                                                                           # reference position (left wall)
+variable           pos_ref_R                    equal -v_dim_L/2                                                                           # reference position (right wall)
+
+variable           pos_base                     equal v_pos_ref_base+v_max_translation*cos(v_omega_1*v_reset_time_now+v_phs_1)
+variable           pos_mw_L                     equal v_pos_ref_L+v_max_translation*cos(v_omega_1*v_reset_time_now+v_phs_1)
+variable           pos_mw_R                     equal v_pos_ref_R+v_max_translation*cos(v_omega_1*v_reset_time_now+v_phs_1)
+
+variable           shear_strain                 equal v_max_sstrain*cos(v_omega_1*v_reset_time_now+v_phs_1)
+
+### 6. Set move mesh
+fix                viblin_base                  all move/mesh mesh box_base     viblin axis 1 0 0 order 1 amplitude ${max_translation} phase ${phs_1} period ${cyc_period}        # in phase pi/2
+fix                viblin_wall_L                all move/mesh mesh box_moving_L viblin axis 1 0 0 order 1 amplitude ${max_translation} phase ${phs_1} period ${cyc_period}        # vibrate linear bottom rotation point in phase pi/2
+fix                viblin_wall_R                all move/mesh mesh box_moving_R viblin axis 1 0 0 order 1 amplitude ${max_translation} phase ${phs_1} period ${cyc_period}        # vibrate linear bottom rotation point in phase pi/2
+
+fix                rot_wall_L                   all move/mesh mesh box_moving_L vibrot origin ${pos_mw_L} 0. -0.015  axis 0 1 0 order 1 amplitude ${max_sstrain} phase ${phs_2} period ${cyc_period}   #phase pi/2
+fix                rot_wall_R                   all move/mesh mesh box_moving_R vibrot origin ${pos_mw_R} 0. -0.015  axis 0 1 0 order 1 amplitude ${max_sstrain} phase ${phs_2} period ${cyc_period}   #phase pi/2
+
+
+##
+#print              "shearing debugging : initial sample height, current sample height, Max_translation" file post_3/cycling.deb
+#fix                print_shearing all print ${screen_nstep} "${initial_sample_height}, ${current_sample_height}, ${max_translation}" screen no append post_3/cycling.deb
+##
+
+### 6. dump
+run 1
+# dump animations
+#dump               dump_stl_side                all mesh/stl   ${screen_nstep} post_3/side_stl_*.stl     box_side
+#dump               dump_stl_base                all mesh/stl   ${screen_nstep} post_3/base_stl_*.stl     box_base
+#dump               dump_stl_moving_L            all mesh/stl   ${screen_nstep} post_3/moving_stl_L_*.stl box_moving_L
+#dump               dump_stl_moving_R            all mesh/stl   ${screen_nstep} post_3/moving_stl_R_*.stl box_moving_R
+#dump               dump_stl_topcap              all mesh/stl   ${screen_nstep} post_3/topcap_stl_*.stl   topcap_ovp 
+#dump               dump_atoms                   all custom/vtk ${screen_nstep} post_3/atoms*.vtk id type x y z vx vy vz omegax omegay omegaz density diameter
+
+#dump               dmp_deb                      all atom/vtk   ${screen_nstep} post_ex/dump*.vtu                                                                 #This is for check MPI
+
+
+# dump stresses
+print              "step, time, z_force, z_position, z_disp, void_ratio, shear_strain, s_xx, s_yy, s_zz, s_xy, s_xz, s_yz" screen no file post_3/cyclic_stress_NO10.txt
+fix                print_stress all print ${screen_nstep} "${step_now}, ${reset_time_now}, ${servo_z_force}, ${servo_z_position}, ${servo_z_disp}, ${void_ratio}, ${shear_strain}, ${s_xx}, ${s_yy}, ${s_zz}, ${s_xy}, ${s_xz}, ${s_yz}" screen no append post_3/cyclic_stress_NO10.txt
+                   
+
+print              "Measurement Sphere Stresses : step, time, shear_strain, s_xx, s_yy, s_zz, s_xy, s_xz, s_yz" screen no file post_3/cyclic_MS_stress_NO10.txt
+fix                print_MS_stress all print ${screen_nstep} "${step_now}, ${reset_time_now}, ${shear_strain}, ${MS_sxx_vol}, ${MS_syy_vol}, ${MS_szz_vol}, ${MS_sxy_vol}, ${MS_sxz_vol}, ${MS_syz_vol}" screen no append post_3/cyclic_MS_stress_NO10.txt   
+
+#print              "Wall Stresses : time, MW_L_x, MW_L_y, MW_L_z, MW_R_x, MW_R_y, MW_R_z" screen no file post_3/wall_stress_NO10.txt
+#fix                print_Wall_stress all print ${screen_nstep} "${reset_time_now}, ${MW_L_fx}, ${MW_L_fy}, ${MW_L_fz}, ${MW_R_fx}, ${MW_R_fy}, ${MW_R_fz}" screen no append post_3/wall_stress_NO10.txt                           # 230817
+                   
+
+### 7. print
+#fix                debug_print                  all print      ${screen_nstep} "current step, reset time, sample height, max_trans = &
+#                   ${step_now}, ${reset_time_now}, ${current_sample_height}, ${max_translation}" screen yes
+
+#fix                ts_check     all check/timestep/gran ${screen_nstep} 0.9 0.9
+
+
+### 8. Run
+print              "             "                                                                           # Temporary command
+print              "Script run up to + , ${cyc_steps}"                                                       # Temporary command
+print              "                     "
+thermo_style       custom step atoms spcpu cpuremain
+thermo             ${screen_nstep}
+thermo_modify      lost ignore norm no
+
+
+run                ${cyc_steps}
