@@ -80,13 +80,16 @@ def main():
 
         results.append((strain, gsecs, ds))
 
-    # strain 기준 정렬
+    # 🔥 strain 기준 정렬
     results.sort(key=lambda x: x[0])
 
-    strain = np.array([r[0] for r in results])
+    # 🔥 strain → %
+    strain = np.array([r[0] for r in results]) * 100.0
 
     G = np.array([r[1] for r in results])  # (N,4)
-    D = np.array([r[2] for r in results])  # (N,4)
+
+    # 🔥 damping → %
+    D = np.array([r[2] for r in results]) * 100.0
 
     # 🔥 각 cycle별 Gmax 계산
     Gmax = np.nanmax(G, axis=0)  # cycle별 max
@@ -97,7 +100,7 @@ def main():
     outname = f"Gsec_D_cycle4_{param_tag}.txt"
 
     with open(outname, "w") as f:
-        f.write("strain\tG1\tG2\tG3\tG4\tG/Gmax1\tG/Gmax2\tG/Gmax3\tG/Gmax4\tD1\tD2\tD3\tD4\n")
+        f.write("strain(%)\tG1\tG2\tG3\tG4\tG/Gmax1\tG/Gmax2\tG/Gmax3\tG/Gmax4\tD1(%)\tD2(%)\tD3(%)\tD4(%)\n")
 
         for i in range(len(strain)):
             row = [strain[i]] + \
