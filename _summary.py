@@ -47,7 +47,20 @@ def load_cdss_data(filename):
 
 
 def extract_strain(fname):
-    match = re.search(r'Shibuya1990_([0-9\.E\-\+]+)_', fname)
+    """
+
+    Example:
+
+    CDSS.Shibuya1990FF_1.0E-4_2.0_5_1.5_0.2_30E9
+
+    Extract:
+
+    1.0E-4
+
+    """
+
+    match = re.search(r'Shibuya1990[^_]*_([0-9\.E\-\+]+)_', fname)
+
     return float(match.group(1)) if match else None
 
 
