@@ -11,7 +11,7 @@ from ak_MS import (
 
 # 🔥 strain 추출
 def extract_strain(fname):
-    match = re.search(r'Shibuya1990_([0-9\.E\-\+]+)_', fname)
+    match = re.search(r'Shibuya1990[^_]*_([0-9\.E\-\+]+)_', fname)
     return float(match.group(1)) if match else None
 
 # 🔥 parameter 추출 (출력 파일명용)
